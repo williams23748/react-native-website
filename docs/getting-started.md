@@ -1,49 +1,88 @@
----
-id: environment-setup
-title: Get Started with React Native
-hide_table_of_contents: true
----
+from flask import Flask, render_template, request, redirect, url_for, session
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 
-import PlatformSupport from '@site/src/theme/PlatformSupport';
-import BoxLink from '@site/src/theme/BoxLink';
+app = Flask(__name__)
 
-**React Native allows developers who know React to create native apps.** At the same time, native developers can use React Native to gain parity between native platforms by writing common features once.
+# Secret key for session management
+app.secret_key = 'UNIMTECH_secret_key'
 
-We believe that the best way to experience React Native is through a **Framework**, a toolbox with all the necessary APIs to let you build production ready apps.
+# Database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///unimtech_chat.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
 
-You can also use React Native without a Framework, however we’ve found that most developers benefit from using a React Native Framework like [Expo](https://expo.dev). Expo provides features like file-based routing, high-quality universal libraries, and the ability to write plugins that modify native code without having to manage native files.
+# Define the database models
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(100), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
 
-<details>
-<summary>Can I use React Native without a Framework?</summary>
+class Message(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    receiver_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content = db.Column(db.String(500), nullable=False)
 
-Yes. You can use React Native without a Framework. **However, if you’re building a new app with React Native, we recommend using a Framework.**
+# Home route (Login Page)
+@app.route('/')
+def home():
+    return render_template('login.html')
 
-In short, you’ll be able to spend time writing your app instead of writing an entire Framework yourself in addition to your app.
+# Sign Up route
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        hashed_password = generate_password_hash(password, method='sha256')
+        new_user = User(username=username, password=hashed_password)
 
-The React Native community has spent years refining approaches to navigation, accessing native APIs, dealing with native dependencies, and more. Most apps need these core features. A React Native Framework provides them from the start of your app.
+        try:
+            db.session.add(new_user)
+            db.session.commit()
+            return redirect(url_for('home'))
+        except:
+            return "Error: User already exists!"
+    return render_template('signup.html')
 
-Without a Framework, you’ll either have to write your own solutions to implement core features, or you’ll have to piece together a collection of pre-existing libraries to create a skeleton of a Framework. This takes real work, both when starting your app, then later when maintaining it.
+# Login route
+@app.route('/login', methods=['POST'])
+def login():
+    username = request.form['username']
+    password = request.form['password']
+    user = User.query.filter_by(username=username).first()
 
-If your app has unusual constraints that are not served well by a Framework, or you prefer to solve these problems yourself, you can make a React Native app without a Framework using Android Studio, Xcode. If you’re interested in this path, learn how to [set up your environment](set-up-your-environment) and how to [get started without a framework](getting-started-without-a-framework).
+    if user and check_password_hash(user.password, password):
+        session['user_id'] = user.id
+        return redirect(url_for('chat'))
+    else:
+        return "Invalid login details. Please try again."
 
-</details>
+# Chat route
+@app.route('/chat', methods=['GET', 'POST'])
+def chat():
+    if 'user_id' not in session:
+        return redirect(url_for('home'))
 
-## Start a new React Native project with Expo
+    if request.method == 'POST':
+        message = request.form['message']
+        receiver_id = request.form['receiver_id']
+        sender_id = session['user_id']
 
-<PlatformSupport platforms={['android', 'ios', 'tv', 'web']} />
+        new_message = Message(sender_id=sender_id, receiver_id=receiver_id, content=message)
+        db.session.add(new_message)
+        db.session.commit()
 
-Expo is a production-grade React Native Framework. Expo provides developer tooling that makes developing apps easier, such as file-based routing, a standard library of native modules, and much more.
+    user_messages = Message.query.filter_by(receiver_id=session['user_id']).all()
+    return render_template('chat.html', messages=user_messages)
 
-Expo's Framework is free and open source, with an active community on [GitHub](https://github.com/expo) and [Discord](https://chat.expo.dev). The Expo team works in close collaboration with the React Native team at Meta to bring the latest React Native features to the Expo SDK.
+# Logout route
+@app.route('/logout')
+def logout():
+    session.pop('user_id', None)
+    return redirect(url_for('home'))
 
-The team at Expo also provides Expo Application Services (EAS), an optional set of services that complements Expo, the Framework, in each step of the development process.
-
-To create a new Expo project, run the following in your terminal:
-
-```shell
-npx create-expo-app@latest
-```
-
-Once you’ve created your app, check out the rest of Expo’s getting started guide to start developing your app.
-
-<BoxLink href="https://docs.expo.dev/get-started/set-up-your-environment">Continue with Expo</BoxLink>
+if __name__ == '__main__':
+    db.create_all()  # Create database tables if they don't exist
+    app.run(debug=True)
